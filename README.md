@@ -1,11 +1,11 @@
 <h1 align="center">ProtonVPN-CLI</h1>
 <p align="center">
-  <img src="https://i.imgur.com/tDrwkX5l.png" alt="Logo"></img>
+  <img src="resources/images/linux-cli-banner.png" alt="Logo"></img>
 </p>
 
 <p align="center">
     <a href="https://pepy.tech/project/protonvpn-cli"><img alt="Downloads" src="https://pepy.tech/badge/protonvpn-cli"></a>
-    <img alt="GitHub" src="https://img.shields.io/github/license/ProtonVPN/protonvpn-cli-ng">
+    <img alt="GitHub" src="https://img.shields.io/github/license/ProtonVPN/linux-cli">
     <a href="https://pepy.tech/project/protonvpn-cli/week"><img alt="Downloads per Week" src="https://pepy.tech/badge/protonvpn-cli/week"></a>
     <br>
     <a href="https://twitter.com/ProtonVPN"><img alt="Twitter Follow" src="https://img.shields.io/twitter/follow/ProtonVPN?style=social"></a>
@@ -18,9 +18,45 @@ ProtonVPN-CLI is a full rewrite of the [bash protonvpn-cli](https://github.com/P
 
 ## Installation & Updating
 
-For more detailed information on installing, updating and uninstalling, please view the extensive [usage guide](https://github.com/ProtonVPN/protonvpn-cli-ng/blob/master/USAGE.md#installation--updating).
+For more detailed information on installing, updating and uninstalling, please view the extensive [usage guide](https://github.com/ProtonVPN/linux-cli/blob/master/USAGE.md#installation--updating).
 
-### Installing Dependencies
+### Installing from distribution repositories
+
+For the following Linux distribution(s), install the official `protonvpn-cli` package:
+
+#### Guix
+
+```sh
+guix install protonvpn-cli
+```
+
+#### Fedora
+
+```sh
+sudo dnf install -y protonvpn-cli
+```
+
+#### CentOS & RHEL
+
+`protonvpn-cli` is available for CentOS/RHEL 7.x and 8.x via the [EPEL repositories](https://fedoraproject.org/wiki/EPEL).
+
+**For CentOS/RHEL 7.x**:
+
+```sh
+sudo yum install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+sudo yum install protonvpn-cli
+```
+
+**For CentOS/RHEL 8.x**:
+
+```sh
+sudo dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+sudo dnf install -y protonvpn-cli
+```
+
+### Installing from PyPI
+
+#### Installing Dependencies
 
 **Dependencies:**
 
@@ -38,8 +74,9 @@ Depending on your distribution, run the appropriate following command to install
 |Ubuntu/Linux Mint/Debian and derivatives | `sudo apt install -y openvpn dialog python3-pip python3-setuptools`|
 |OpenSUSE/SLES                            | `sudo zypper in -y openvpn dialog python3-pip python3-setuptools`  |
 |Arch Linux/Manjaro                       | `sudo pacman -S openvpn dialog python-pip python-setuptools`       |
+|Guix                                     | `guix environment protonvpn-cli`                                   |
 
-### Installing ProtonVPN-CLI
+#### Installing ProtonVPN-CLI
 
 Installation happens via Python's package manager PIP.
 
@@ -47,23 +84,23 @@ Installation happens via Python's package manager PIP.
 
 `sudo pip3 install protonvpn-cli`
 
-### Updating ProtonVPN-CLI
+#### Updating ProtonVPN-CLI
 
 `sudo pip3 install protonvpn-cli --upgrade`
 
 ### Manual Installation from source
 
-*Disclaimer: If you are unsure about what you're doing, please follow the [normal installation guide](https://github.com/ProtonVPN/protonvpn-cli-ng/blob/master/USAGE.md#installation--updating).*
+*Disclaimer: If you are unsure about what you're doing, please follow the [normal installation guide](https://github.com/ProtonVPN/linux-cli/blob/master/USAGE.md#installation--updating).*
 
 It is recommended to do the manual installation in a virtual environment. Especially if it serves the purpose of developing.
 
 1. Clone this repository
 
-    `git clone https://github.com/protonvpn/protonvpn-cli-ng`
+    `git clone https://github.com/protonvpn/linux-cli`
 
 2. Step into the directory
 
-   `cd protonvpn-cli-ng`
+   `cd linux-cli`
 
 3. Install
 
@@ -73,7 +110,7 @@ For updating, you just need to pull the latest version of the repository with gi
 
 ### How to use
 
-#### For more detailed information, see the extensive [usage guide](https://github.com/ProtonVPN/protonvpn-cli-ng/blob/master/USAGE.md).
+#### For more detailed information, see the extensive [usage guide](https://github.com/ProtonVPN/linux-cli/blob/master/USAGE.md).
 
 | **Command**                       | **Description**                                       |
 |:----------------------------------|:------------------------------------------------------|
@@ -98,4 +135,4 @@ All connect options can be used with the `-p` flag to explicitly specify which t
 
 ## Contributing
 
-If you want to contribute to this project, please read the [contribution guide](https://github.com/ProtonVPN/protonvpn-cli-ng/blob/master/CONTRIBUTING.md).
+If you want to contribute to this project, please read the [contribution guide](https://github.com/ProtonVPN/linux-cli/blob/master/CONTRIBUTING.md).

@@ -6,7 +6,6 @@ import time
 import shutil
 import random
 import re
-import fileinput
 import configparser
 import datetime
 import zlib
@@ -19,11 +18,12 @@ from .utils import (
     get_servers, get_server_value, get_config_value,
     set_config_value, get_ip_info, get_country_name,
     get_fastest_server, check_update, get_default_nic,
-    get_transferred_data
+    get_transferred_data, create_openvpn_config,
+    is_ipv6_disabled
 )
 # Constants
 from .constants import (
-    CONFIG_DIR, TEMPLATE_FILE, OVPN_FILE, PASSFILE, CONFIG_FILE
+    CONFIG_DIR, OVPN_FILE, PASSFILE, CONFIG_FILE
 )
 
 
@@ -185,14 +185,13 @@ def country_f(country_code, protocol=None):
     # Filter out excluded features and countries
     server_pool = []
     for server in servers:
-        if server["Features"] not in excluded_features \
-         and server["ExitCountry"] == country_code:
+        if server["Features"] not in excluded_features and server["ExitCountry"] == country_code:
             server_pool.append(server)
 
     if len(server_pool) == 0:
         print(
-            "[!] No Server in country {0} found\n".format(country_code) +
-            "[!] Please choose a valid country"
+            "[!] No Server in country {0} found\n".format(country_code)
+            + "[!] Please choose a valid country"
         )
         logger.debug("No server in country {0}".format(country_code))
         sys.exit(1)
@@ -263,8 +262,8 @@ def direct(user_input, protocol=None):
                      "{0}".format('-' + tor if tor is not None else '')
     else:
         print(
-            "[!] '{0}' is not a valid servername\n".format(user_input) +
-            "[!] Please enter a valid servername"
+            "[!] '{0}' is not a valid servername\n".format(user_input)
+            + "[!] Please enter a valid servername"
         )
         logger.debug("'{0}' is not a valid servername'".format(user_input))
         sys.exit(1)
@@ -273,8 +272,8 @@ def direct(user_input, protocol=None):
 
     if servername not in [server["Name"] for server in servers]:
         print(
-            "[!] {0} doesn't exist, ".format(servername) +
-            "is under maintenance, or inaccessible with your plan.\n"
+            "[!] {0} doesn't exist, ".format(servername)
+            + "is under maintenance, or inaccessible with your plan.\n"
             "[!] Please enter a different, valid servername."
         )
         logger.debug("{0} doesn't exist".format(servername))
@@ -422,18 +421,18 @@ def status():
     # Print Status Output
     logger.debug("Printing status")
     print(
-        "Status:       Connected\n" +
-        "Time:         {0}\n".format(connection_time) +
-        "IP:           {0}\n".format(ip) +
-        "Server:       {0}\n".format(connected_server) +
-        "Features:     {0}\n".format(all_features[feature]) +
-        "Protocol:     {0}\n".format(connected_protocol.upper()) +
-        "Kill Switch:  {0}\n".format(killswitch_status) +
-        "Country:      {0}\n".format(country) +
-        "City:         {0}\n".format(city) +
-        "Load:         {0}%\n".format(load) +
-        "Received:     {0}\n".format(rx_amount) +
-        "Sent:         {0}".format(tx_amount)
+        "Status:       Connected\n"
+        + "Time:         {0}\n".format(connection_time)
+        + "IP:           {0}\n".format(ip)
+        + "Server:       {0}\n".format(connected_server)
+        + "Features:     {0}\n".format(all_features[feature])
+        + "Protocol:     {0}\n".format(connected_protocol.upper())
+        + "Kill Switch:  {0}\n".format(killswitch_status)
+        + "Country:      {0}\n".format(country)
+        + "City:         {0}\n".format(city)
+        + "Load:         {0}%\n".format(load)
+        + "Received:     {0}\n".format(rx_amount)
+        + "Sent:         {0}".format(tx_amount)
     )
 
 
@@ -447,19 +446,12 @@ def openvpn_connect(servername, protocol):
 
     port = {"udp": 1194, "tcp": 443}
 
-    shutil.copyfile(TEMPLATE_FILE, OVPN_FILE)
-
     servers = get_servers()
     subservers = get_server_value(servername, "Servers", servers)
     ip_list = [subserver["EntryIP"] for subserver in subservers]
 
-    with open(OVPN_FILE, "a") as f:
-        f.write("\n\n")
-        f.write("proto {0}\n".format(protocol.lower()))
-        for ip in ip_list:
-            f.write("remote {0} {1}\n".format(ip, port[protocol.lower()]))
-        logger.debug("IPs: {0}".format(ip_list))
-        logger.debug("connect.ovpn written")
+    # Ports gets casted to a list instead of just a single port to make it iterable
+    create_openvpn_config(serverlist=ip_list, protocol=protocol, ports=[port[protocol.lower()]])
 
     disconnect(passed=True)
 
@@ -490,8 +482,8 @@ def openvpn_connect(servername, protocol):
             if "Initialization Sequence Completed" in content:
                 # Enable DNS Leak Protection
                 dns_dhcp_regex = re.compile(
-                      r"(dhcp-option DNS )"
-                      r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
+                    r"(dhcp-option DNS )"
+                    r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
                 )
 
                 dns_dhcp = dns_dhcp_regex.search(content)
@@ -526,8 +518,8 @@ def openvpn_connect(servername, protocol):
                 sys.exit(1)
             # Stop after 45s
             elif time.time() - time_start >= 45:
-                print("Connection timed out after 45 Seconds")
-                logger.debug("Connection timed out after 45 Seconds")
+                print("Connection failed.")
+                logger.debug("Connection failed after 45 Seconds")
                 sys.exit(1)
             time.sleep(0.1)
 
@@ -584,9 +576,12 @@ def manage_dns(mode, dns_server=False):
         # Remove previous nameservers
         dns_regex = re.compile(r"^nameserver .*$")
 
-        for line in fileinput.input(resolvconf_path, inplace=True):
-            if not dns_regex.search(line) and not dns_regex.search(line):
-                print(line, end="")
+        with open(backupfile, 'r') as backup_handle:
+            with open(resolvconf_path, 'w') as resolvconf_handle:
+                for line in backup_handle:
+                    if not dns_regex.search(line):
+                        resolvconf_handle.write(line)
+
         logger.debug("Removed existing DNS Servers")
 
         # Add ProtonVPN managed DNS Server to resolv.conf
@@ -655,6 +650,10 @@ def manage_ipv6(mode):
             logger.debug("IPv6 backup exists")
             manage_ipv6("restore")
 
+        if is_ipv6_disabled():
+            logger.debug("IPv6 is disabled or unavailable, skipping leak protection")
+            return
+
         # Backing up ip6ables rules
         logger.debug("Backing up ip6tables rules")
         ip6tables_rules = subprocess.run(["ip6tables-save"],
@@ -692,7 +691,7 @@ def manage_ipv6(mode):
         if os.path.isfile(ip6tables_backupfile):
             subprocess.run(
                 "ip6tables-restore < {0}".format(
-                                          ip6tables_backupfile
+                    ip6tables_backupfile
                 ), shell=True, stdout=subprocess.PIPE
             )
             logger.debug("ip6tables restored")

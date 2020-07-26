@@ -6,25 +6,25 @@ import time
 import json
 import subprocess
 import re
-import fileinput
 import random
 import ipaddress
 import math
 # External Libraries
 import requests
+from jinja2 import Environment, FileSystemLoader
 # ProtonVPN-CLI functions
 from .logger import logger
 # Constants
 from .constants import (
-    USER, CONFIG_FILE, SERVER_INFO_FILE, TEMPLATE_FILE, SPLIT_TUNNEL_FILE,
-    VERSION
+    USER, CONFIG_FILE, SERVER_INFO_FILE, SPLIT_TUNNEL_FILE,
+    VERSION, OVPN_FILE
 )
 
 
 def call_api(endpoint, json_format=True, handle_errors=True):
     """Call to the ProtonVPN API."""
 
-    api_domain = "https://api.protonvpn.ch"
+    api_domain = get_config_value("USER", "api_domain").rstrip("/")
     url = api_domain + endpoint
 
     headers = {
@@ -188,15 +188,26 @@ def get_default_nic():
 
 def is_connected():
     """Check if a VPN connection already exists."""
-    ovpn_processes = subprocess.run(["pgrep", "--exact", "openvpn"],
+    ovpn_processes = subprocess.run(["pgrep", "-x", "openvpn"],
                                     stdout=subprocess.PIPE)
     ovpn_processes = ovpn_processes.stdout.decode("utf-8").split()
 
     logger.debug(
         "Checking connection Status. OpenVPN processes: {0}"
         .format(len(ovpn_processes))
-        )
+    )
     return True if ovpn_processes != [] else False
+
+
+def is_ipv6_disabled():
+    """Returns True if IPv6 is disabled and False if it's enabled"""
+    ipv6_state = subprocess.run(['sysctl', '-n', 'net.ipv6.conf.all.disable_ipv6'],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    if ipv6_state.returncode != 0 or int(ipv6_state.stdout):
+        return True
+    else:
+        return False
 
 
 def wait_for_network(wait_time):
@@ -227,27 +238,33 @@ def cidr_to_netmask(cidr):
     return str(subnet.netmask)
 
 
-def make_ovpn_template():
-    """Create OpenVPN template file."""
-    pull_server_data()
+def render_j2_template(template_file, destination_file, values):
+    """
+    Render a Jinja2 template from a file and save it to a specified location
+    template_file = name of jinja2 template
+    destination_file = path where rendered file will be saved to
+    values = dictionary with values for jinja2 templates
+    """
 
-    with open(SERVER_INFO_FILE, "r") as f:
-        server_data = json.load(f)
+    j2 = Environment(loader=FileSystemLoader(os.path.join(os.path.dirname(os.path.realpath(__file__)), "templates")))
+    template = j2.get_template(template_file)
 
-    # Get the ID of the first server from the API
-    server_id = server_data["LogicalServers"][0]["ID"]
+    # Render Template and write to file
+    with open(destination_file, "w") as f:
+        f.write(template.render(values))
+    logger.debug("Rendered {0} from {1}".format(destination_file, template_file))
+    change_file_owner(destination_file)
 
-    config_file_response = call_api(
-        "/vpn/config?Platform=linux&LogicalID={0}&Protocol=tcp".format(server_id),  # noqa
-        json_format=False
-    )
 
-    with open(TEMPLATE_FILE, "wb") as f:
-        for chunk in config_file_response.iter_content(100000):
-            f.write(chunk)
-            logger.debug("OpenVPN config file downloaded")
+def create_openvpn_config(serverlist, protocol, ports):
+    """
+    Create the OpenVPN Config file
+    serverlist = list with IPs or hostnames
+    protocol = "udp" or "tcp"
+    ports = list with possible ports
+    """
 
-    # Write split tunneling config to OpenVPN Template
+    # Split Tunneling
     try:
         if get_config_value("USER", "split_tunnel") == "1":
             split = True
@@ -255,54 +272,40 @@ def make_ovpn_template():
             split = False
     except KeyError:
         split = False
+
+    ip_nm_pairs = []
+
     if split:
-        logger.debug("Writing Split Tunnel config")
         with open(SPLIT_TUNNEL_FILE, "r") as f:
             content = f.readlines()
 
-        with open(TEMPLATE_FILE, "a") as f:
-            for line in content:
-                line = line.rstrip("\n")
-                netmask = None
+        for line in content:
+            line = line.rstrip("\n")
+            netmask = "255.255.255.255"
+            if not is_valid_ip(line):
+                logger.debug("[!] '{0}' is invalid. Skipped.".format(line))
+                continue
+            if "/" in line:
+                ip, cidr = line.split("/")
+                netmask = cidr_to_netmask(int(cidr))
+            else:
+                ip = line
 
-                if not is_valid_ip(line):
-                    logger.debug(
-                        "[!] '{0}' is invalid. Skipped.".format(line)
-                    )
-                    continue
+            ip_nm_pairs.append({"ip": ip, "nm": netmask})
 
-                if "/" in line:
-                    ip, cidr = line.split("/")
-                    netmask = cidr_to_netmask(int(cidr))
-                else:
-                    ip = line
+    # IPv6
+    ipv6_disabled = is_ipv6_disabled()
 
-                if netmask is None:
-                    netmask = "255.255.255.255"
+    j2_values = {
+        "openvpn_protocol": protocol,
+        "serverlist": serverlist,
+        "openvpn_ports": ports,
+        "split": split,
+        "ip_nm_pairs": ip_nm_pairs,
+        "ipv6_disabled": ipv6_disabled
+    }
 
-                if is_valid_ip(ip):
-                    f.write(
-                        "\nroute {0} {1} net_gateway".format(ip, netmask)
-                    )
-
-                else:
-                    logger.debug(
-                        "[!] '{0}' is invalid. Skipped.".format(line)
-                    )
-
-        logger.debug("Split Tunneling Written")
-
-    # Remove all remote, proto, up, down and script-security lines
-    # from template file
-    remove_regex = re.compile(r"^(remote|proto|up|down|script-security) .*$")
-
-    for line in fileinput.input(TEMPLATE_FILE, inplace=True):
-        if not remove_regex.search(line):
-            print(line, end="")
-
-    logger.debug("remote and proto lines removed")
-
-    change_file_owner(TEMPLATE_FILE)
+    render_j2_template(template_file="openvpn_template.j2", destination_file=OVPN_FILE, values=j2_values)
 
 
 def change_file_owner(path):
@@ -340,8 +343,8 @@ def check_root():
                                    stderr=subprocess.PIPE)
             if not check.returncode == 0:
                 logger.debug("{0} not found".format(program))
-                print("'{0}' not found. \n".format(program) +
-                      "Please install {0}.".format(program))
+                print("'{0}' not found. \n".format(program)
+                      + "Please install {0}.".format(program))
                 sys.exit(1)
 
 
@@ -411,13 +414,13 @@ def check_update():
         print(
             "A new Update for ProtonVPN-CLI (v{0}) ".format('.'.join(
                 [str(x) for x in latest_version])
-                ) +
-            "is available.\n" +
-            "Follow the Update instructions on\n" +
-            "https://github.com/ProtonVPN/protonvpn-cli-ng/blob/master/USAGE.md#updating-protonvpn-cli\n" + # noqa
-            "\n"
-            "To see what's new, check out the changelog:\n" +
-            "https://github.com/ProtonVPN/protonvpn-cli-ng/blob/master/CHANGELOG.md" # noqa
+            )
+            + "is available.\n"
+            + "Follow the Update instructions on\n"
+            + "https://github.com/ProtonVPN/linux-cli/blob/master/USAGE.md#updating-protonvpn-cli\n"
+            + "\n"
+            + "To see what's new, check out the changelog:\n"
+            + "https://github.com/ProtonVPN/linux-cli/blob/master/CHANGELOG.md"
         )
 
 
@@ -446,6 +449,7 @@ def check_init():
                     "check_update_interval": "3",
                     "killswitch": "0",
                     "split_tunnel": "0",
+                    "api_domain": "https://api.protonvpn.ch",
                 },
             }
 
