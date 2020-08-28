@@ -1,48 +1,3 @@
-"""
-A CLI for ProtonVPN.
-
-Usage:
-    protonvpn init
-    protonvpn (c | connect) [<servername>] [-p <protocol>]
-    protonvpn (c | connect) [-f | --fastest] [-p <protocol>]
-    protonvpn (c | connect) [--cc <code>] [-p <protocol>]
-    protonvpn (c | connect) [--sc] [-p <protocol>]
-    protonvpn (c | connect) [--p2p] [-p <protocol>]
-    protonvpn (c | connect) [--tor] [-p <protocol>]
-    protonvpn (c | connect) [-r | --random] [-p <protocol>]
-    protonvpn (r | reconnect)
-    protonvpn (d | disconnect)
-    protonvpn (s | status)
-    protonvpn configure
-    protonvpn refresh
-    protonvpn examples
-    protonvpn (-h | --help)
-    protonvpn (-v | --version)
-
-Options:
-    -f, --fastest       Select the fastest ProtonVPN server.
-    -r, --random        Select a random ProtonVPN server.
-    --cc CODE           Determine the country for fastest connect.
-    --sc                Connect to the fastest Secure-Core server.
-    --p2p               Connect to the fastest torrent server.
-    --tor               Connect to the fastest Tor server.
-    -p PROTOCOL         Determine the protocol (UDP or TCP).
-    -h, --help          Show this help message.
-    -v, --version       Display version.
-
-Commands:
-    init                Initialize a ProtonVPN profile.
-    c, connect          Connect to a ProtonVPN server.
-    r, reconnect        Reconnect to the last server.
-    d, disconnect       Disconnect the current session.
-    s, status           Show connection status.
-    configure           Change ProtonVPN-CLI configuration.
-    refresh             Refresh OpenVPN configuration and server data.
-    examples            Print some example commands.
-
-Arguments:
-    <servername>        Servername (CH#4, CH-US-1, HK5-Tor).
-"""
 # Standard Libraries
 import sys
 import os
@@ -51,19 +6,18 @@ import configparser
 import getpass
 import shutil
 import time
-# External Libraries
-from docopt import docopt
+import argparse
 # protonvpn-cli Functions
 from . import connection
 from .logger import logger
 from .utils import (
-    check_root, change_file_owner, pull_server_data, make_ovpn_template,
-    check_init, set_config_value, get_config_value, is_valid_ip,
-    wait_for_network
+    check_root, change_file_owner, pull_server_data,
+    check_init, set_config_value, get_config_value,
+    is_valid_ip, wait_for_network
 )
 # Constants
 from .constants import (
-    CONFIG_DIR, CONFIG_FILE, PASSFILE, USER, VERSION, SPLIT_TUNNEL_FILE
+    CONFIG_DIR, CONFIG_FILE, PASSFILE, USER, VERSION, SPLIT_TUNNEL_FILE, USAGE
 )
 
 
@@ -88,13 +42,62 @@ def cli():
     logger.debug("USER: {0}".format(USER))
     logger.debug("CONFIG_DIR: {0}".format(CONFIG_DIR))
 
-    args = docopt(__doc__, version="ProtonVPN-CLI v{0}".format(VERSION))
-    logger.debug("Arguments\n{0}".format(str(args).replace("\n", "")))
+    ProtonVPNCLI()
 
-    # Parse arguments
-    if args.get("init"):
+
+class ProtonVPNCLI():
+    server_features_dict = dict(
+        p2p=4,
+        sc=1,
+        tor=2
+    )
+
+    def __init__(self):
+        parser = argparse.ArgumentParser(
+            prog="protonvpn",
+            add_help=False
+        )
+
+        parser.add_argument("command", nargs="?")
+        parser.add_argument("-v", "--version", required=False, action="store_true")
+        parser.add_argument("-h", "--help", required=False, action="store_true")
+
+        args = parser.parse_args(sys.argv[1:2])
+
+        logger.debug("Main argument\n{0}".format(args))
+
+        if args.version:
+            print("\nProtonVPN CLI v.{}".format(VERSION))
+            parser.exit(1)
+        elif not args.command or not hasattr(self, args.command) or args.help:
+            print(USAGE)
+            parser.exit(1)
+
+        getattr(self, args.command)()
+
+    def init(self):
+        """CLI command that intialiazes ProtonVPN profile"""
+        parser = argparse.ArgumentParser(description="Initialize ProtonVPN profile", prog="protonvpn init")
+        parser.add_argument(
+            "-i", "--inline", nargs=3, required=False,
+            help="Inline intialize profile. (username password protocol)", metavar=""
+        )
+
+        args = parser.parse_args(sys.argv[2:])
+        logger.debug("Sub-arguments\n{0}".format(args))
+
+        if args.inline:
+            print("Please intialize without '-i/--inline' as it is not fully supported yet.")
+            sys.exit(1)
+
         init_cli()
-    elif args.get("c") or args.get("connect"):
+
+    def c(self):
+        """Short CLI command for connecting to the VPN"""
+        self.connect()
+
+    def connect(self):
+        """Full CLI command for connecting to the VPN"""
         check_root()
         check_init()
 
@@ -106,45 +109,97 @@ def cli():
         if int(os.environ.get("PVPN_WAIT", 0)) > 0:
             wait_for_network(int(os.environ["PVPN_WAIT"]))
 
-        protocol = args.get("-p")
-        if protocol is not None and protocol.lower().strip() in ["tcp", "udp"]:
+        parser = argparse.ArgumentParser(description="Connect to ProtonVPN", prog="protonvpn c")
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("servername", nargs="?", help="Servername (CH#4, CH-US-1, HK5-Tor).", metavar="")
+        group.add_argument("-f", "--fastest", help="Connect to the fastest ProtonVPN server.", action="store_true")
+        group.add_argument("-r", "--random", help="Connect to a random ProtonVPN server.", action="store_true")
+        group.add_argument("--cc", help="Connect to the specified country code (SE, PT, BR, AR).", metavar="")
+        group.add_argument("--sc", help="Connect to the fastest Secure-Core server.", action="store_true")
+        group.add_argument("--p2p", help="Connect to the fastest torrent server.", action="store_true")
+        group.add_argument("--tor", help="Connect to the fastest Tor server.", action="store_true")
+        parser.add_argument(
+            "-p", "--protocol", help="Connect via specified protocol.",
+            choices=["udp", "tcp"], metavar="", type=str.lower
+        )
+
+        args = parser.parse_args(sys.argv[2:])
+        logger.debug("Sub-arguments:\n{0}".format(args))
+
+        protocol = args.protocol
+        if protocol and protocol.lower().strip() in ["tcp", "udp"]:
             protocol = protocol.lower().strip()
 
-        if args.get("--random"):
+        if args.random:
             connection.random_c(protocol)
-        elif args.get("--fastest"):
+        elif args.fastest:
             connection.fastest(protocol)
-        elif args.get("<servername>"):
-            connection.direct(args.get("<servername>"), protocol)
-        elif args.get("--cc") is not None:
-            connection.country_f(args.get("--cc"), protocol)
-        # Features: 1: Secure-Core, 2: Tor, 4: P2P
-        elif args.get("--p2p"):
-            connection.feature_f(4, protocol)
-        elif args.get("--sc"):
-            connection.feature_f(1, protocol)
-        elif args.get("--tor"):
-            connection.feature_f(2, protocol)
+        elif args.servername:
+            connection.direct(args.servername, protocol)
+        elif args.cc:
+            connection.country_f(args.cc, protocol)
+        elif args.p2p:
+            connection.feature_f(self.server_features_dict.get("p2p", None), protocol)
+        elif args.sc:
+            connection.feature_f(self.server_features_dict.get("sc", None), protocol)
+        elif args.tor:
+            connection.feature_f(self.server_features_dict.get("tor", None), protocol)
         else:
             connection.dialog()
-    elif args.get("r") or args.get("reconnect"):
+
+    def r(self):
+        """Short CLI command to reconnect to the last connected VPN Server"""
+        self.reconnect()
+
+    def reconnect(self):
+        """Full CLI command to reconnect to the last connected VPN Server"""
         check_root()
         check_init()
         connection.reconnect()
-    elif args.get("d") or args.get("disconnect"):
+
+    def d(self):
+        """Short CLI command to disconnect the VPN if a connection is present"""
+        self.disconnect()
+
+    def disconnect(self):
+        """Full CLI command to disconnect the VPN if a connection is present"""
         check_root()
         check_init()
         connection.disconnect()
-    elif args.get("s") or args.get("status"):
+
+    def s(self):
+        """Short CLI command to display the current VPN status"""
+        self.status()
+
+    def status(self):
+        """Full CLI command to display the current VPN status"""
         connection.status()
-    elif args.get("configure"):
+
+    def cf(self):
+        """Short CLI command to change single configuration values"""
+        self.configure()
+
+    def configure(self):
+        """Full CLI command to change single configuration values"""
         check_root()
         check_init()
         configure_cli()
-    elif args.get("refresh"):
+
+    def rf(self):
+        """Short CLI command to refresh server list"""
+        self.refresh()
+
+    def refresh(self):
+        """Full CLI command to refresh server list"""
+        check_init()
         pull_server_data(force=True)
-        make_ovpn_template()
-    elif args.get("examples"):
+
+    def ex(self):
+        """Short CLI command to display usage examples"""
+        self.examples()
+
+    def examples(self):
+        """Full CLI command to display usage examples"""
         print_examples()
 
 
@@ -162,6 +217,7 @@ def init_cli():
             "dns_leak_protection": "1",
             "custom_dns": "None",
             "check_update_interval": "3",
+            "api_domain": "https://api.protonvpn.ch",
         }
         config["metadata"] = {
             "last_api_pull": "0",
@@ -224,11 +280,11 @@ def init_cli():
 
     print()
     print(
-        "You entered the following information:\n" +
-        "Username: {0}\n".format(ovpn_username) +
-        "Password: {0}\n".format("*" * len(ovpn_password)) +
-        "Tier: {0}\n".format(protonvpn_plans[user_tier]) +
-        "Default protocol: {0}".format(user_protocol.upper())
+        "You entered the following information:\n"
+        + "Username: {0}\n".format(ovpn_username)
+        + "Password: {0}\n".format("*" * len(ovpn_password))
+        + "Tier: {0}\n".format(protonvpn_plans[user_tier])
+        + "Default protocol: {0}".format(user_protocol.upper())
     )
     print()
 
@@ -241,7 +297,6 @@ def init_cli():
         init_config_file()
 
         pull_server_data()
-        make_ovpn_template()
 
         # Change user tier to correct value
         if user_tier == 4:
@@ -506,7 +561,7 @@ def set_dns_protection():
         )
         print()
         user_choice = input(
-                "Please enter your choice or leave empty to quit: "
+            "Please enter your choice or leave empty to quit: "
         )
         user_choice = user_choice.lower().strip()
         if user_choice == "1":
@@ -566,7 +621,7 @@ def set_killswitch():
         )
         print()
         user_choice = input(
-                "Please enter your choice or leave empty to quit: "
+            "Please enter your choice or leave empty to quit: "
         )
         user_choice = user_choice.lower().strip()
         if user_choice == "1":
@@ -591,8 +646,8 @@ def set_killswitch():
         set_config_value("USER", "split_tunnel", 0)
         print()
         print(
-            "[!] Kill Switch can't be used with Split Tunneling.\n" +
-            "[!] Split Tunneling has been disabled."
+            "[!] Kill Switch can't be used with Split Tunneling.\n"
+            + "[!] Split Tunneling has been disabled."
         )
         time.sleep(1)
 
@@ -612,8 +667,8 @@ def set_split_tunnel():
             set_config_value("USER", "killswitch", 0)
             print()
             print(
-                "[!] Split Tunneling can't be used with Kill Switch.\n" +
-                "[!] Kill Switch has been disabled.\n"
+                "[!] Split Tunneling can't be used with Kill Switch.\n"
+                + "[!] Kill Switch has been disabled.\n"
             )
             time.sleep(1)
 
@@ -655,4 +710,3 @@ def set_split_tunnel():
 
     print()
     print("Split tunneling configuration updated.")
-    make_ovpn_template()
